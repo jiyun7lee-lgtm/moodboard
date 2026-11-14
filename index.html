@@ -3,33 +3,461 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Creative Agent</title>
+  <title>moodroom — 노드형 무드보드</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f3f2ec;
+      color: #282821;
+      font: 14px/1.5 "Malgun Gothic", sans-serif;
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 8px 12px;
+      background: #f0efe8;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover, button[aria-pressed="true"] { background: #e0e6ce; }
+    header {
+      height: 62px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: white;
+      border-bottom: 1px solid #e7e5dc;
+    }
+    .logo { font: bold 26px Georgia, serif; letter-spacing: -1px; }
+    .logo span { color: #778452; }
+    main {
+      height: calc(100dvh - 62px);
+      min-height: 620px;
+      display: grid;
+      grid-template-rows: minmax(280px, 1fr) auto;
+    }
+    .board {
+      position: relative;
+      overflow: hidden;
+      background-image: radial-gradient(#d1cfc1 1px, transparent 1px);
+      background-size: 19px 19px;
+    }
+    .viewport { position: absolute; inset: 0; touch-action: none; cursor: grab; }
+    .stage {
+      position: absolute;
+      width: 900px;
+      height: 400px;
+      top: 50%;
+      left: 50%;
+    }
+    .lines { position: absolute; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+    .card {
+      position: absolute;
+      width: 196px;
+      padding: 12px;
+      border: 1px solid #e2dfd4;
+      border-radius: 19px;
+      background: white;
+      box-shadow: 0 8px 22px #39351e12;
+      cursor: move;
+      user-select: none;
+    }
+    .card.root { background: #e5e9d3; padding: 18px; }
+    .card.selected { outline: 3px solid #879462; }
+    .type { color: #606b45; font-size: 11px; font-weight: bold; }
+    .card h2 { font-size: 15px; margin: 7px 0 4px; }
+    .card.root h2 { font: 24px Georgia, serif; }
+    .card p { margin: 0 0 6px; font-size: 12px; color: #626257; }
+    .card a { color: #536344; font-size: 12px; }
+    .art, .card img { width: 100%; height: 92px; margin-top: 7px; border-radius: 11px; object-fit: cover; }
+    .art {
+      background: linear-gradient(127deg, transparent 45%, #596442 46% 62%, transparent 63%),
+                  linear-gradient(34deg, #b65b43 32%, transparent 33%), #dfc598;
+    }
+    .art.alt {
+      background: radial-gradient(ellipse at 68% 65%, #b2654e 0 20%, transparent 21%),
+                  linear-gradient(145deg, #536044 35%, #b9a97d 36% 65%, #e9d9b7 66%);
+    }
+    .palette { display: flex; height: 40px; margin-top: 7px; overflow: hidden; border-radius: 10px; }
+    .palette span { flex: 1; }
+    .toolbar {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 4px;
+      padding: 5px;
+      max-width: calc(100% - 32px);
+      background: white;
+      border-radius: 15px;
+      box-shadow: 0 4px 16px #0001;
+    }
+    .toolbar output { align-self: center; min-width: 45px; text-align: center; font-size: 12px; }
+    #board-status {
+      position: absolute;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 7px 12px;
+      border-radius: 12px;
+      background: #303928;
+      color: white;
+      max-width: 90%;
+      width: max-content;
+      pointer-events: none;
+    }
+    #board-status:empty { display: none; }
+    .chat {
+      width: min(800px, calc(100% - 24px));
+      margin: 0 auto 14px;
+      background: white;
+      border: 1px solid #dfded4;
+      border-radius: 23px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px #3b392318;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat-title {
+      padding: 9px 16px;
+      border-bottom: 1px solid #edece6;
+      font-weight: bold;
+    }
+    #status { margin: 0; padding: 8px 16px; color: #52574a; font-size: 13px; }
+    #webchat { height: clamp(180px, 30dvh, 320px); }
+  </style>
 </head>
 <body>
-  <p id="status" role="status" aria-live="polite">채팅에 연결하는 중입니다...</p>
-  <div id="webchat" style="height: 600px"></div>
+  <header>
+    <strong class="logo"><span>✿</span> moodroom</strong>
+    <button id="save" type="button">보드 저장</button>
+  </header>
+
+  <main>
+    <section class="board" aria-label="레퍼런스 무드보드">
+      <div id="viewport" class="viewport">
+        <div id="stage" class="stage">
+          <svg id="lines" class="lines" aria-hidden="true"></svg>
+        </div>
+      </div>
+      <div class="toolbar" aria-label="보드 도구">
+        <button id="minus" type="button" aria-label="축소">−</button>
+        <output id="zoom" aria-label="보드 배율"></output>
+        <button id="plus" type="button" aria-label="확대">+</button>
+        <button id="fit" type="button">화면 맞춤</button>
+        <button id="link" type="button" aria-pressed="false">노드 연결</button>
+        <button id="add-image" type="button">이미지 추가</button>
+        <input id="image-file" type="file" accept="image/*" hidden>
+      </div>
+      <div id="board-status" role="status"></div>
+    </section>
+
+    <section class="chat" aria-labelledby="chat-title">
+      <div class="chat-title" id="chat-title">✦ 무드보드 에이전트</div>
+      <p id="status" role="status" aria-live="polite">채팅에 연결하는 중입니다...</p>
+      <div id="webchat" role="region" aria-label="AI 에이전트 채팅"></div>
+    </section>
+  </main>
+
+  <script>
+    const byId = id => document.getElementById(id);
+    const viewport = byId("viewport");
+    const stage = byId("stage");
+    const lineLayer = byId("lines");
+    const storageKey = "moodroom";
+
+    let cards = [
+      { id: 0, x: 352, y: 150, type: "탐색 키워드", title: "Paper collage", desc: "종이 콜라주", root: true },
+      { id: 1, x: 76, y: 34, type: "이미지", title: "겹쳐 붙인 종이", desc: "찢어진 가장자리 · 질감", art: "art",
+        url: "https://www.metmuseum.org/art/collection/search?q=paper%20collage" },
+      { id: 2, x: 625, y: 30, type: "이미지", title: "유기적인 형태", desc: "추상 · 올리브 · 레이어", art: "art alt",
+        url: "https://www.tate.org.uk/art/art-terms/c/collage" },
+      { id: 3, x: 630, y: 250, type: "글", title: "콜라주 기법", desc: "종이 조각을 재배치하는 시각적 구성",
+        url: "https://www.tate.org.uk/art/art-terms/c/collage" },
+      { id: 4, x: 75, y: 248, type: "팔레트", title: "따뜻한 종이 톤", desc: "베이지 · 올리브 · 테라코타",
+        colors: ["#ddc8a3", "#a49a70", "#656d47", "#b66b52", "#e9dfc9"] }
+    ];
+    let edges = [[0, 1], [0, 2], [0, 3], [0, 4]];
+    let next = 5;
+
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey));
+      if (Array.isArray(saved?.cards) && Array.isArray(saved?.edges)) {
+        cards = saved.cards;
+        edges = saved.edges;
+        next = Math.max(0, ...cards.map(card => card.id)) + 1;
+      }
+    } catch {}
+
+    let scale = 1;
+    let panX = 0;
+    let panY = 0;
+    let linking = false;
+    let selected = null;
+    let drag = null;
+    let timer;
+    const cardElements = new Map();
+
+    function announce(message) {
+      byId("board-status").textContent = message;
+      clearTimeout(timer);
+      timer = setTimeout(() => byId("board-status").textContent = "", 3500);
+    }
+
+    function applyView() {
+      stage.style.transform = `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${scale})`;
+      byId("zoom").textContent = `${Math.round(scale * 100)}%`;
+    }
+
+    function fit() {
+      const left = Math.min(...cards.map(card => card.x));
+      const top = Math.min(...cards.map(card => card.y));
+      const right = Math.max(...cards.map(card => card.x + cardElements.get(card.id).offsetWidth));
+      const bottom = Math.max(...cards.map(card => card.y + cardElements.get(card.id).offsetHeight));
+      scale = Math.min(1, (viewport.clientWidth - 26) / (right - left),
+        (viewport.clientHeight - 86) / (bottom - top));
+      panX = (450 - (left + right) / 2) * scale;
+      panY = (200 - (top + bottom) / 2) * scale + 26;
+      applyView();
+    }
+
+    function drawLines() {
+      lineLayer.replaceChildren();
+      const nodes = new Map(cards.map(card => [card.id, card]));
+      for (const [from, to] of edges) {
+        const a = nodes.get(from);
+        const b = nodes.get(to);
+        if (!a || !b) continue;
+        const aBox = cardElements.get(from);
+        const bBox = cardElements.get(to);
+        const x1 = a.x + aBox.offsetWidth / 2;
+        const y1 = a.y + aBox.offsetHeight / 2;
+        const x2 = b.x + bBox.offsetWidth / 2;
+        const y2 = b.y + bBox.offsetHeight / 2;
+        const mid = (x1 + x2) / 2;
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", `M${x1} ${y1} C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`);
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", "#a5a990");
+        path.setAttribute("stroke-width", "2");
+        lineLayer.append(path);
+      }
+    }
+
+    function make(tag, value = "", className = "") {
+      const element = document.createElement(tag);
+      element.className = className;
+      element.textContent = value;
+      return element;
+    }
+
+    function positionCard(element, card) {
+      element.style.left = `${card.x}px`;
+      element.style.top = `${card.y}px`;
+    }
+
+    function selectCard(card) {
+      if (!linking) return;
+      if (selected === null) {
+        selected = card.id;
+        announce("연결할 두 번째 카드를 선택하세요.");
+      } else if (selected !== card.id) {
+        const first = selected;
+        if (!edges.some(([a, b]) => (a === first && b === card.id) ||
+            (a === card.id && b === first))) {
+          edges.push([first, card.id]);
+          announce("두 카드를 연결했어요.");
+        } else {
+          announce("이미 연결된 카드예요.");
+        }
+        selected = null;
+      }
+      for (const [id, element] of cardElements) {
+        element.classList.toggle("selected", id === selected);
+      }
+      drawLines();
+    }
+
+    function renderBoard() {
+      for (const element of cardElements.values()) element.remove();
+      cardElements.clear();
+
+      for (const card of cards) {
+        const box = make("article", "", card.root ? "card root" : "card");
+        box.tabIndex = 0;
+        box.classList.toggle("selected", selected === card.id);
+        positionCard(box, card);
+        box.append(make("div", card.type, "type"));
+        if (card.art) box.append(make("div", "", card.art));
+        if (card.image) {
+          const image = document.createElement("img");
+          image.src = card.image;
+          image.alt = card.title;
+          image.draggable = false;
+          box.append(image);
+        }
+        if (card.colors) {
+          const palette = make("div", "", "palette");
+          for (const color of card.colors) {
+            const swatch = make("span");
+            swatch.style.backgroundColor = color;
+            swatch.title = color;
+            palette.append(swatch);
+          }
+          box.append(palette);
+        }
+        box.append(make("h2", card.title), make("p", card.desc));
+        if (card.url) {
+          const anchor = make("a", "참고 출처 ↗");
+          anchor.href = card.url;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          box.append(anchor);
+        }
+        box.addEventListener("pointerdown", event => {
+          if (event.target.closest("a")) return;
+          event.stopPropagation();
+          startDrag(event, card, box);
+        });
+        box.addEventListener("keydown", event => {
+          if (event.target === box && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            selectCard(card);
+          }
+        });
+        cardElements.set(card.id, box);
+        stage.append(box);
+      }
+      drawLines();
+    }
+
+    function startDrag(event, card = null, box = null) {
+      if (event.button !== 0 || drag) return;
+      viewport.setPointerCapture(event.pointerId);
+      drag = {
+        pointerId: event.pointerId, card, box,
+        startX: event.clientX, startY: event.clientY,
+        x: card ? card.x : panX, y: card ? card.y : panY, moved: false
+      };
+    }
+
+    viewport.addEventListener("pointerdown", event => {
+      if (!event.target.closest(".card")) startDrag(event);
+    });
+    viewport.addEventListener("pointermove", event => {
+      if (drag?.pointerId !== event.pointerId) return;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (Math.hypot(dx, dy) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      if (drag.card) {
+        drag.card.x = drag.x + dx / scale;
+        drag.card.y = drag.y + dy / scale;
+        positionCard(drag.box, drag.card);
+        drawLines();
+      } else {
+        panX = drag.x + dx;
+        panY = drag.y + dy;
+        applyView();
+      }
+    });
+    viewport.addEventListener("pointerup", event => {
+      if (drag?.pointerId !== event.pointerId) return;
+      const finished = drag;
+      drag = null;
+      if (!finished.moved && finished.card) selectCard(finished.card);
+    });
+    viewport.addEventListener("lostpointercapture", () => { drag = null; });
+
+    function changeZoom(amount) {
+      scale = Math.min(2, Math.max(0.15, scale + amount));
+      applyView();
+    }
+
+    viewport.addEventListener("wheel", event => {
+      event.preventDefault();
+      changeZoom(event.deltaY < 0 ? 0.07 : -0.07);
+    }, { passive: false });
+    byId("plus").onclick = () => changeZoom(0.1);
+    byId("minus").onclick = () => changeZoom(-0.1);
+    byId("fit").onclick = fit;
+    byId("link").onclick = () => {
+      linking = !linking;
+      selected = null;
+      byId("link").setAttribute("aria-pressed", String(linking));
+      for (const element of cardElements.values()) element.classList.remove("selected");
+      if (linking) announce("연결할 카드 두 장을 차례로 선택하세요.");
+    };
+    byId("save").onclick = () => {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({ cards, edges, next }));
+        announce("이 브라우저에 보드를 저장했어요.");
+      } catch {
+        announce("브라우저에 보드를 저장하지 못했어요.");
+      }
+    };
+
+    byId("add-image").onclick = () => byId("image-file").click();
+    byId("image-file").onchange = async event => {
+      const file = event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      try {
+        const bitmap = await createImageBitmap(file);
+        const ratio = Math.min(1, 460 / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * ratio));
+        canvas.height = Math.max(1, Math.round(bitmap.height * ratio));
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        cards.push({
+          id: next++,
+          x: 450 - panX / scale - 98,
+          y: 200 - panY / scale - 70,
+          type: "첨부 이미지",
+          title: file.name,
+          desc: "드래그해서 보드에 배치하세요.",
+          image: canvas.toDataURL("image/webp", 0.82)
+        });
+        renderBoard();
+        announce("참고 이미지를 보드에 추가했어요.");
+      } catch {
+        announce("이 이미지를 열지 못했어요.");
+      }
+    };
+
+    renderBoard();
+    fit();
+    window.addEventListener("resize", fit);
+  </script>
+
   <script src="https://cdn.botframework.com/botframework-webchat/4.18.0/webchat.js"></script>
   <script>
     const BROKER_URL = "https://dl-broker-juwon-4jt3z.azurewebsites.net/api/directlineToken";
     const SEALED = "BcXfKR9UGotCG4tv28tnwqBxw0s_5HgLsnLdwphZn9WCDMl6V6Mkycm6jzILG-mEArfooWaJ53z4FpwyK25mRtu8Y1BZrhRnRmI7ZwNO3iOa1aiBo1Lksa9GWxnrFi0zYB11vgtVCaR-c9H5RXU9V6fLPLDk4quAqvLzKNaIU97_GBlbihJmAN4LFZk50nr28WdHDnNCybB4LgMAHT3UWtywD0iG3_oEdrl67QAAbjeHBj_1nY1rqWUMlU3YhqKmrLIxpbFwUvIQiKWL6OlC-cw7xs0-hYthOsdhQmseAshpnR8MOfTy76-xUENCseTNw8199Yqqmb3tlFRzWg9t0ryra6eZ-NQS--AL20swxIF1ArQuddWriY-NLA9vjFNwpOcTZ2mCGUU4Z-iFSpCHBCb34Tc5Ugw6jYkxcru3Ial_JkiZ-IQ9vBJYHH0b2flW86-D49Akt5lhkDxaMx4qKwmXadOVmaPpFcZ5FbQq9WmNmmz_ZA4cDhCLAZkb81h8YMXtDbyuGakgFPQxhRcz_JoY_OIBr7b1TtJQkEtka4sfUCAYvI71FOVSMSB0In-48vcKUpSinPfIbH9MBkZeb3u7-ljBN_4Tu37jr1iUqn-nPsa6_eBm-gyYZiYidvvsxzjwGpY7Ao1Qnful8IO4QyM1yoQ";
-    const status = document.getElementById("status");
+    const chatStatus = document.getElementById("status");
 
     function showError(message) {
-      status.hidden = false;
-      status.textContent = message;
+      chatStatus.hidden = false;
+      chatStatus.textContent = message;
     }
 
     async function connect() {
-      if (!window.WebChat ||
-          typeof WebChat.createDirectLine !== "function" ||
-          typeof WebChat.renderWebChat !== "function") {
+      const webChat = window.WebChat;
+      if (typeof webChat?.createDirectLine !== "function" ||
+          typeof webChat?.renderWebChat !== "function") {
         showError("채팅 구성 요소를 불러오지 못했습니다. 네트워크를 확인한 뒤 새로고침해 주세요.");
         return;
       }
 
       let response;
       try {
-        // Keep this a simple CORS request; the broker may not support preflight.
+        // 문자열 본문을 사용해 브로커 요청에 CORS preflight가 생기지 않도록 합니다.
         response = await fetch(BROKER_URL, {
           method: "POST",
           body: JSON.stringify({ sealed: SEALED })
@@ -38,8 +466,9 @@
         showError("서버에 연결하지 못했습니다. 네트워크와 배포 주소를 확인해 주세요.");
         return;
       }
+
       if (!response.ok) {
-        showError("서버가 연결 요청을 처리하지 못했습니다 (HTTP " + response.status + ").");
+        showError(`서버가 연결 요청을 처리하지 못했습니다 (HTTP ${response.status}).`);
         return;
       }
 
@@ -50,20 +479,35 @@
         showError("서버 응답을 읽을 수 없습니다. 잠시 후 다시 시도해 주세요.");
         return;
       }
-      if (!data || typeof data.token !== "string" || !data.token.trim()) {
+      if (typeof data?.token !== "string" || !data.token.trim()) {
         showError("서버에서 연결 토큰을 받지 못했습니다. 암호와 배포 주소를 확인해 주세요.");
         return;
       }
 
       try {
-        const directLine = WebChat.createDirectLine({ token: data.token });
-        status.hidden = true;
+        const directLine = webChat.createDirectLine({ token: data.token });
+        webChat.renderWebChat({
+          directLine,
+          locale: "ko-KR",
+          styleOptions: {
+            accent: "#596941",
+            backgroundColor: "#FFFFFF",
+            bubbleBackground: "#F2F3E9",
+            bubbleFromUserBackground: "#E4EAD4",
+            bubbleBorderRadius: 14,
+            bubbleFromUserBorderRadius: 14,
+            sendBoxBackground: "#F7F6F0"
+          }
+        }, document.getElementById("webchat"));
+
+        chatStatus.hidden = true;
         directLine.postActivity({
-          type: "event", name: "startConversation", from: { id: "user" }
+          type: "event",
+          name: "startConversation",
+          from: { id: "user" }
         }).subscribe({
           error: () => showError("첫 인사를 요청하지 못했습니다. 채팅창에 메시지를 입력해 주세요.")
         });
-        WebChat.renderWebChat({ directLine, locale: "ko-KR" }, document.getElementById("webchat"));
       } catch {
         showError("채팅을 시작하지 못했습니다. 새로고침 후 다시 시도해 주세요.");
       }
